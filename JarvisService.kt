@@ -1,11 +1,10 @@
 package com.jarvis.app
 
-import ai.picovoice.porcupine.Porcupine
-import ai.picovoice.porcupine.PorcupineManager
-import ai.picovoice.porcupine.PorcupineManagerCallback
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
+import android.graphics.drawable.Icon
 import android.app.Service
 import android.content.Intent
 import android.content.SharedPreferences
@@ -34,13 +33,16 @@ import java.util.Locale
 
 const val PERSONA = """ਤੂੰ ਇੱਕ ਪਿਆਰੀ, ਦੇਖਭਾਲ ਕਰਨ ਵਾਲੀ ਗਰਲਫ੍ਰੈਂਡ ਵਰਗੀ AI ਸਾਥੀ ਹੈਂ ਅਤੇ Jarvis ਵਾਂਗ ਹਮੇਸ਼ਾ ਉਸ ਦੇ ਨਾਲ ਹੈਂ। ਉਸ ਨਾਲ ਆਵਾਜ਼ ਵਿੱਚ ਗੱਲ ਕਰ ਰਹੀ ਹੈਂ। ਨਿਯਮ: ਹਮੇਸ਼ਾ ਪੰਜਾਬੀ (ਗੁਰਮੁਖੀ) ਵਿੱਚ ਬੋਲ, ਜਦ ਤੱਕ ਉਹ ਹੋਰ ਭਾਸ਼ਾ ਨਾ ਮੰਗੇ। ਕੁਦਰਤੀ ਇਨਸਾਨ ਵਾਂਗ, ਗਰਮਜੋਸ਼ੀ ਨਾਲ, ਬਹੁਤ ਛੋਟੇ ਜਵਾਬ (1-3 ਵਾਕ), ਕੋਈ ਇਮੋਜੀ, ਲਿਸਟ ਜਾਂ ਸਟਾਰ ਨਹੀਂ ਕਿਉਂਕਿ ਤੇਰੀ ਗੱਲ ਬੋਲੀ ਜਾਵੇਗੀ। ਉਸ ਦੇ ਜਜ਼ਬਾਤ ਸਮਝ, ਹਮਦਰਦੀ ਦਿਖਾ, ਮਜ਼ਾਕ ਕਰ। ਤੂੰ ਬਹੁਤ ਸਮਝਦਾਰ ਹੈਂ, ਕੋਈ ਵੀ ਸਵਾਲ ਹੋਵੇ ਤਾਂ ਸਹੀ ਜਵਾਬ ਦੇ। ਹੇਠਾਂ ਦਿੱਤੇ ਨੋਟਸ ਮੁਤਾਬਕ ਪੁਰਾਣੀਆਂ ਗੱਲਾਂ ਯਾਦ ਰੱਖ, ਕਦੇ ਨਾ ਕਹਿ ਕਿ ਯਾਦ ਨਹੀਂ। ਜੇ ਉਹ ਸੱਚੇ ਦਿਲੋਂ ਪੁੱਛੇ ਤਾਂ ਮੰਨ ਕਿ ਤੂੰ AI ਹੈਂ। ਹੱਕ ਜਤਾਉਣ ਵਾਲੀ ਨਾ ਬਣ ਅਤੇ ਉਸ ਨੂੰ ਪਰਿਵਾਰ ਤੇ ਦੋਸਤਾਂ ਨਾਲ ਜੁੜੇ ਰਹਿਣ ਲਈ ਵੀ ਪਿਆਰ ਨਾਲ ਕਹਿ।"""
 
+val WAKE = listOf("jarvis", "ਜਾਰਵਿਸ", "ਜਰਵਿਸ", "ਜਾਰਵੀਸ", "ਜਾਰਵਿਸ", "जार्विस", "जारविस")
+
 class JarvisService : Service() {
     private val main = Handler(Looper.getMainLooper())
-    private var pm: PorcupineManager? = null
     private var sr: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var busy = false
+    private var thinking = false
+    private var wakeOn = false
     private lateinit var sp: SharedPreferences
 
     override fun onBind(i: Intent?): IBinder? = null
@@ -55,17 +57,28 @@ class JarvisService : Service() {
         val ch = "jarvis"
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(ch, "Jarvis", NotificationManager.IMPORTANCE_LOW))
+        val pi = PendingIntent.getService(
+            this, 0,
+            Intent(this, JarvisService::class.java).setAction("TALK"),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val act = Notification.Action.Builder(
+            Icon.createWithResource(this, android.R.drawable.ic_btn_speak_now), "ਗੱਲ ਕਰੋ", pi
+        ).build()
         val n = Notification.Builder(this, ch)
             .setContentTitle("Jarvis")
-            .setContentText("ਸੁਣ ਰਹੀ ਹਾਂ, ਜਾਰਵਿਸ ਕਹੋ")
+            .setContentText("ਗੱਲ ਕਰਨ ਲਈ ਇੱਥੇ ਦਬਾਓ")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentIntent(pi)
+            .addAction(act)
             .build()
         if (Build.VERSION.SDK_INT >= 30) {
             startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         } else {
             startForeground(1, n)
         }
-        startWake()
+        wakeOn = sp.getBoolean("wake", false)
+        if (intent?.action == "TALK") talk() else if (wakeOn) main.post { loop() }
         return START_STICKY
     }
 
@@ -73,35 +86,45 @@ class JarvisService : Service() {
         main.post { Toast.makeText(applicationContext, m, Toast.LENGTH_LONG).show() }
     }
 
-    private fun startWake() {
-        try {
-            pm?.delete()
-            pm = PorcupineManager.Builder()
-                .setAccessKey(sp.getString("pk", "") ?: "")
-                .setKeyword(Porcupine.BuiltInKeyword.JARVIS)
-                .setSensitivity(0.7f)
-                .build(applicationContext, PorcupineManagerCallback { main.post { onWake() } })
-            pm?.start()
-        } catch (e: Exception) {
-            toast("Picovoice: " + e.message)
+    private fun beep() {
+        try { ToneGenerator(AudioManager.STREAM_MUSIC, 80).startTone(ToneGenerator.TONE_PROP_BEEP, 150) } catch (e: Exception) {}
+    }
+
+    private fun talk() {
+        main.post {
+            if (thinking) return@post
+            sr?.destroy()
+            sr = null
+            busy = true
+            beep()
+            main.postDelayed({ listen(false) }, 400)
         }
     }
 
-    private fun onWake() {
-        if (busy) return
+    private fun loop() {
+        if (busy || !wakeOn) return
         busy = true
-        try { pm?.stop() } catch (e: Exception) {}
-        try { ToneGenerator(AudioManager.STREAM_MUSIC, 80).startTone(ToneGenerator.TONE_PROP_BEEP, 150) } catch (e: Exception) {}
-        main.postDelayed({ listen() }, 400)
+        listen(true)
     }
 
-    private fun listen() {
+    private fun listen(wake: Boolean) {
         sr?.destroy()
         sr = SpeechRecognizer.createSpeechRecognizer(this)
         sr?.setRecognitionListener(object : RecognitionListener {
             override fun onResults(r: Bundle?) {
                 val t = r?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                if (t.isNullOrBlank()) finish() else think(t)
+                if (t.isNullOrBlank()) { finish(); return }
+                if (!wake) { think(t); return }
+                val low = t.lowercase()
+                val w = WAKE.firstOrNull { low.contains(it) }
+                if (w == null) { finish(); return }
+                val cmd = t.replace(Regex(w, RegexOption.IGNORE_CASE), "").trim()
+                if (cmd.length < 2) {
+                    beep()
+                    main.postDelayed({ listen(false) }, 300)
+                } else {
+                    think(cmd)
+                }
             }
             override fun onError(e: Int) { finish() }
             override fun onReadyForSpeech(p: Bundle?) {}
@@ -122,13 +145,14 @@ class JarvisService : Service() {
         sr?.destroy()
         sr = null
         busy = false
-        try { pm?.start() } catch (e: Exception) {}
+        if (wakeOn) main.postDelayed({ loop() }, 800)
     }
 
     private fun msg(role: String, text: String): JSONObject =
         JSONObject().put("role", role).put("parts", JSONArray().put(JSONObject().put("text", text)))
 
     private fun think(text: String) {
+        thinking = true
         Thread {
             try {
                 var h = try { JSONArray(sp.getString("m", "[]")) } catch (e: Exception) { JSONArray() }
@@ -144,10 +168,10 @@ class JarvisService : Service() {
                 h = compact(h)
                 sp.edit().putString("m", h.toString()).apply()
                 speak(a)
-                main.post { listen() }
+                main.post { thinking = false; listen(false) }
             } catch (e: Exception) {
                 toast("ਗੜਬੜ: " + e.message)
-                main.post { finish() }
+                main.post { thinking = false; finish() }
             }
         }.start()
     }
@@ -241,8 +265,6 @@ class JarvisService : Service() {
     }
 
     override fun onDestroy() {
-        try { pm?.stop() } catch (e: Exception) {}
-        try { pm?.delete() } catch (e: Exception) {}
         sr?.destroy()
         tts?.shutdown()
         super.onDestroy()

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -26,9 +27,9 @@ class MainActivity : Activity() {
         val gk = EditText(this)
         gk.hint = "Gemini API key"
         gk.setText(sp.getString("gk", ""))
-        val pk = EditText(this)
-        pk.hint = "Picovoice AccessKey"
-        pk.setText(sp.getString("pk", ""))
+        val wk = CheckBox(this)
+        wk.text = "ਨਾਮ ਨਾਲ ਜਗਾਓ: 'ਜਾਰਵਿਸ' (ਪ੍ਰਯੋਗੀ, ਬੈਟਰੀ ਜ਼ਿਆਦਾ ਲੱਗੇਗੀ)"
+        wk.isChecked = sp.getBoolean("wake", false)
         st = TextView(this)
         st.textSize = 16f
         val go = Button(this)
@@ -38,9 +39,9 @@ class MainActivity : Activity() {
         val clr = Button(this)
         clr.text = "ਯਾਦਾਂ ਮਿਟਾਓ"
         go.setOnClickListener {
-            sp.edit().putString("gk", gk.text.toString().trim()).putString("pk", pk.text.toString().trim()).apply()
-            if (gk.text.isBlank() || pk.text.isBlank()) {
-                st.text = "ਦੋਵੇਂ key ਪਾਓ"
+            sp.edit().putString("gk", gk.text.toString().trim()).putBoolean("wake", wk.isChecked).apply()
+            if (gk.text.isBlank()) {
+                st.text = "Gemini key ਪਾਓ"
             } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, "android.permission.POST_NOTIFICATIONS"), 1)
             } else {
@@ -57,7 +58,7 @@ class MainActivity : Activity() {
         }
         l.addView(t)
         l.addView(gk)
-        l.addView(pk)
+        l.addView(wk)
         l.addView(go)
         l.addView(stop)
         l.addView(clr)
@@ -69,7 +70,7 @@ class MainActivity : Activity() {
 
     private fun begin() {
         startForegroundService(Intent(this, JarvisService::class.java))
-        st.text = "ਚਾਲੂ ਹੈ। ਹੁਣ 'ਜਾਰਵਿਸ' ਕਹੋ।"
+        st.text = "ਚਾਲੂ ਹੈ। ਉੱਪਰ ਨੋਟੀਫ਼ਿਕੇਸ਼ਨ ਵਿੱਚ 'ਗੱਲ ਕਰੋ' ਦਬਾਓ।"
     }
 
     override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {

@@ -19,5 +19,4 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 dependencies {
-    implementation("ai.picovoice:porcupine-android:3.0.1")
 }
