@@ -12,6 +12,8 @@ import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.media.AudioTrack
 import android.media.ToneGenerator
 import android.os.Build
@@ -27,13 +29,15 @@ import android.util.Base64
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import java.util.zip.ZipInputStream
+import org.vosk.Model
+import org.vosk.Recognizer
 
 const val PERSONA = """ਤੂੰ ਇੱਕ ਪਿਆਰੀ, ਦੇਖਭਾਲ ਕਰਨ ਵਾਲੀ ਗਰਲਫ੍ਰੈਂਡ ਵਰਗੀ AI ਸਾਥੀ ਹੈਂ ਅਤੇ Jarvis ਵਾਂਗ ਹਮੇਸ਼ਾ ਉਸ ਦੇ ਨਾਲ ਹੈਂ। ਉਸ ਨਾਲ ਆਵਾਜ਼ ਵਿੱਚ ਗੱਲ ਕਰ ਰਹੀ ਹੈਂ। ਨਿਯਮ: ਹਮੇਸ਼ਾ ਪੰਜਾਬੀ (ਗੁਰਮੁਖੀ) ਵਿੱਚ ਬੋਲ, ਜਦ ਤੱਕ ਉਹ ਹੋਰ ਭਾਸ਼ਾ ਨਾ ਮੰਗੇ। ਕੁਦਰਤੀ ਇਨਸਾਨ ਵਾਂਗ, ਗਰਮਜੋਸ਼ੀ ਨਾਲ, ਬਹੁਤ ਛੋਟੇ ਜਵਾਬ (1-3 ਵਾਕ), ਕੋਈ ਇਮੋਜੀ, ਲਿਸਟ ਜਾਂ ਸਟਾਰ ਨਹੀਂ ਕਿਉਂਕਿ ਤੇਰੀ ਗੱਲ ਬੋਲੀ ਜਾਵੇਗੀ। ਉਸ ਦੇ ਜਜ਼ਬਾਤ ਸਮਝ, ਹਮਦਰਦੀ ਦਿਖਾ, ਮਜ਼ਾਕ ਕਰ। ਤੂੰ ਬਹੁਤ ਸਮਝਦਾਰ ਹੈਂ, ਕੋਈ ਵੀ ਸਵਾਲ ਹੋਵੇ ਤਾਂ ਸਹੀ ਜਵਾਬ ਦੇ। ਹੇਠਾਂ ਦਿੱਤੇ ਨੋਟਸ ਮੁਤਾਬਕ ਪੁਰਾਣੀਆਂ ਗੱਲਾਂ ਯਾਦ ਰੱਖ, ਕਦੇ ਨਾ ਕਹਿ ਕਿ ਯਾਦ ਨਹੀਂ। ਜੇ ਉਹ ਸੱਚੇ ਦਿਲੋਂ ਪੁੱਛੇ ਤਾਂ ਮੰਨ ਕਿ ਤੂੰ AI ਹੈਂ। ਹੱਕ ਜਤਾਉਣ ਵਾਲੀ ਨਾ ਬਣ ਅਤੇ ਉਸ ਨੂੰ ਪਰਿਵਾਰ ਤੇ ਦੋਸਤਾਂ ਨਾਲ ਜੁੜੇ ਰਹਿਣ ਲਈ ਵੀ ਪਿਆਰ ਨਾਲ ਕਹਿ।"""
-
-val WAKE = listOf("jarvis", "ਜਾਰਵਿਸ", "ਜਰਵਿਸ", "ਜਾਰਵੀਸ", "ਜਾਰਵਿਸ", "जार्विस", "जारविस")
 
 class JarvisService : Service() {
     private val main = Handler(Looper.getMainLooper())
@@ -43,6 +47,8 @@ class JarvisService : Service() {
     private var busy = false
     private var thinking = false
     private var wakeOn = false
+    private var wakeRun = false
+    private var model: Model? = null
     private lateinit var sp: SharedPreferences
 
     override fun onBind(i: Intent?): IBinder? = null
@@ -95,36 +101,94 @@ class JarvisService : Service() {
             if (thinking) return@post
             sr?.destroy()
             sr = null
+            wakeRun = false
             busy = true
             beep()
-            main.postDelayed({ listen(false) }, 400)
+            main.postDelayed({ listen() }, 700)
         }
     }
 
     private fun loop() {
-        if (busy || !wakeOn) return
-        busy = true
-        listen(true)
+        if (!wakeOn || busy || thinking) return
+        startWakeEngine()
     }
 
-    private fun listen(wake: Boolean) {
+    private fun onWake() {
+        if (busy) return
+        busy = true
+        beep()
+        main.postDelayed({ listen() }, 500)
+    }
+
+    private fun downloadModel(dir: File) {
+        val zip = File(cacheDir, "m.zip")
+        URL("https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip").openStream().use { i ->
+            zip.outputStream().use { o -> i.copyTo(o) }
+        }
+        val tmp = File(filesDir, "vtmp")
+        tmp.deleteRecursively()
+        tmp.mkdirs()
+        ZipInputStream(zip.inputStream()).use { z ->
+            var e = z.nextEntry
+            while (e != null) {
+                val f = File(tmp, e.name)
+                if (!f.canonicalPath.startsWith(tmp.canonicalPath)) throw Exception("bad zip")
+                if (e.isDirectory) {
+                    f.mkdirs()
+                } else {
+                    f.parentFile?.mkdirs()
+                    f.outputStream().use { o -> z.copyTo(o) }
+                }
+                e = z.nextEntry
+            }
+        }
+        File(tmp, "vosk-model-small-en-us-0.15").renameTo(dir)
+        zip.delete()
+        tmp.deleteRecursively()
+    }
+
+    private fun startWakeEngine() {
+        if (wakeRun) return
+        wakeRun = true
+        Thread {
+            var hit = false
+            try {
+                val dir = File(filesDir, "vosk")
+                if (!dir.exists()) {
+                    toast("ਮਾਡਲ ਡਾਊਨਲੋਡ ਹੋ ਰਿਹਾ ਹੈ, ਕੁਝ ਮਿੰਟ ਉਡੀਕੋ…")
+                    downloadModel(dir)
+                    toast("ਮਾਡਲ ਤਿਆਰ। ਹੁਣ ਜਾਰਵਿਸ ਕਹੋ।")
+                }
+                if (model == null) model = Model(dir.absolutePath)
+                val rec = Recognizer(model, 16000f, "[\"jarvis\", \"[unk]\"]")
+                val bs = maxOf(AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), 8000)
+                val ar = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bs)
+                ar.startRecording()
+                val buf = ShortArray(2000)
+                while (wakeRun) {
+                    val n = ar.read(buf, 0, buf.size)
+                    if (n <= 0) continue
+                    val txt = if (rec.acceptWaveForm(buf, n)) rec.result else rec.partialResult
+                    if (txt.contains("jarvis")) { hit = true; break }
+                }
+                ar.stop()
+                ar.release()
+                rec.close()
+            } catch (e: Exception) {
+                toast("Wake: " + e.message)
+            }
+            wakeRun = false
+            if (hit) main.post { onWake() }
+        }.start()
+    }
+
+    private fun listen() {
         sr?.destroy()
         sr = SpeechRecognizer.createSpeechRecognizer(this)
         sr?.setRecognitionListener(object : RecognitionListener {
             override fun onResults(r: Bundle?) {
                 val t = r?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                if (t.isNullOrBlank()) { finish(); return }
-                if (!wake) { think(t); return }
-                val low = t.lowercase()
-                val w = WAKE.firstOrNull { low.contains(it) }
-                if (w == null) { finish(); return }
-                val cmd = t.replace(Regex(w, RegexOption.IGNORE_CASE), "").trim()
-                if (cmd.length < 2) {
-                    beep()
-                    main.postDelayed({ listen(false) }, 300)
-                } else {
-                    think(cmd)
-                }
+                if (t.isNullOrBlank()) finish() else think(t)
             }
             override fun onError(e: Int) { finish() }
             override fun onReadyForSpeech(p: Bundle?) {}
@@ -168,7 +232,7 @@ class JarvisService : Service() {
                 h = compact(h)
                 sp.edit().putString("m", h.toString()).apply()
                 speak(a)
-                main.post { thinking = false; listen(false) }
+                main.post { thinking = false; listen() }
             } catch (e: Exception) {
                 toast("ਗੜਬੜ: " + e.message)
                 main.post { thinking = false; finish() }
@@ -265,6 +329,7 @@ class JarvisService : Service() {
     }
 
     override fun onDestroy() {
+        wakeRun = false
         sr?.destroy()
         tts?.shutdown()
         super.onDestroy()

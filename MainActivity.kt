@@ -28,7 +28,7 @@ class MainActivity : Activity() {
         gk.hint = "Gemini API key"
         gk.setText(sp.getString("gk", ""))
         val wk = CheckBox(this)
-        wk.text = "ਨਾਮ ਨਾਲ ਜਗਾਓ: 'ਜਾਰਵਿਸ' (ਪ੍ਰਯੋਗੀ, ਬੈਟਰੀ ਜ਼ਿਆਦਾ ਲੱਗੇਗੀ)"
+        wk.text = "ਨਾਮ ਨਾਲ ਜਗਾਓ: ਬੋਲੋ 'Jarvis' (ਪਹਿਲੀ ਵਾਰ 40MB ਡਾਊਨਲੋਡ ਹੋਵੇਗਾ)"
         wk.isChecked = sp.getBoolean("wake", false)
         st = TextView(this)
         st.textSize = 16f
